@@ -53,7 +53,7 @@ class TestByCategory:
         with get_session() as session:
             bunq_chk = account_by_key(session, "bunq_checking")    # liquidity
             ibkr = account_by_key(session, "ibkr_portfolio")        # investments
-            amundi = account_by_key(session, "amundi_pension")      # pension
+            amundi = account_by_key(session, "amundi_pension")      # investments (moved from pension)
             today = datetime.date.today()
 
             for acc, val in [(bunq_chk, "1000"), (ibkr, "5000"), (amundi, "2000")]:
@@ -63,8 +63,8 @@ class TestByCategory:
             result = nw.by_category(session, today)
 
         assert result["liquidity"] == Decimal("1000")
-        assert result["investments"] == Decimal("5000")
-        assert result["pension"] == Decimal("2000")
+        assert result["investments"] == Decimal("7000")  # ibkr 5000 + amundi 2000
+        assert result["pension"] == Decimal("0")
 
     def test_multiple_accounts_same_category(self, tmp_db):
         """bunq_checking and bunq_savings are both liquidity."""

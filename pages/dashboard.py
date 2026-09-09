@@ -24,28 +24,27 @@ def show():
         # ── KPI row ───────────────────────────────────────────────────────────
         total = nw.total_net_worth(session, today)
         delta_30 = nw.delta(session, today, days_back=30)
+        delta_qtd = nw.qtd_delta(session, today)
         delta_ytd = nw.ytd_delta(session, today)
+        delta_1yr = nw.delta_1yr(session, today)
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns([2, 1])
         with col1:
-            st.metric(
-                "Total Net Worth",
-                f"€{total:,.0f}",
-                delta=f"€{delta_30:,.0f} (30 d)" if delta_30 is not None else None,
-                delta_color="normal",
-            )
+            st.metric("Total Net Worth", f"€{total:,.0f}")
         with col2:
-            st.metric(
-                "YTD Change",
-                f"€{delta_ytd:,.0f}" if delta_ytd is not None else "—",
-                delta=None,
-            )
-        with col3:
             since_data = _earliest_snapshot_date(session)
-            st.metric(
-                "Tracking since",
-                since_data.isoformat() if since_data else "—",
-            )
+            st.metric("Tracking since", since_data.isoformat() if since_data else "—")
+
+        # ── 4 change banners ─────────────────────────────────────────────────
+        dc1, dc2, dc3, dc4 = st.columns(4)
+        with dc1:
+            st.metric("30 days", "", delta=_fmt_delta(delta_30), delta_color="normal")
+        with dc2:
+            st.metric("QTD", "", delta=_fmt_delta(delta_qtd), delta_color="normal")
+        with dc3:
+            st.metric("YTD", "", delta=_fmt_delta(delta_ytd), delta_color="normal")
+        with dc4:
+            st.metric("1 year", "", delta=_fmt_delta(delta_1yr), delta_color="normal")
 
         st.divider()
 
@@ -60,11 +59,14 @@ def show():
         trend_data = repo.net_worth_trend(session, since=since)
 
         if trend_data:
-            chart_toggle = st.checkbox("Stacked by category", value=False)
+            chart_mode = st.radio(
+                "View",
+                ["Total", "By category", "By account"],
+                horizontal=True,
+                label_visibility="collapsed",
+            )
 
-            if chart_toggle:
-                _stacked_area_chart(session, since, today)
-            else:
+            if chart_mode == "Total":
                 df = pd.DataFrame(trend_data, columns=["date", "net_worth"])
                 df["date"] = pd.to_datetime(df["date"])
                 df["net_worth"] = df["net_worth"].astype(float)
@@ -81,6 +83,9 @@ def show():
                 )
                 fig.update_traces(fill="tozeroy", fillcolor="rgba(76,114,176,0.10)")
                 st.plotly_chart(fig, use_container_width=True)
+            else:
+                group_by = "category" if chart_mode == "By category" else "account"
+                _stacked_area_chart(session, since, today, group_by=group_by)
         else:
             st.info("No snapshot data yet. Add balances on the **Accounts** page or run a sync.")
 
@@ -157,54 +162,89 @@ def show():
         _ibkr_holdings_section(session)
 
 
-def _stacked_area_chart(session, since, today):
-    """Render a stacked area chart with per-category series."""
+def _stacked_area_chart(session, since, today, group_by: str = "category"):
+    """Stacked area chart with carry-forward so there are no gaps between snapshots.
+
+    group_by="category" → one area per category (liquidity / investments / pension)
+    group_by="account"  → one area per account
+    """
     accounts = repo.all_accounts(session)
-    cat_series: dict[str, list[tuple[datetime.date, float]]] = {}
 
-    for cat in ["liquidity", "investments", "pension"]:
-        cat_accounts = [a for a in accounts if a.category == cat]
-        if not cat_accounts:
-            continue
-        # Get all dates for accounts in this category
-        all_dates = sorted(
-            {
-                s.as_of
-                for a in cat_accounts
-                for s in repo.snapshots_for_account(session, a.id, since=since)
-            }
-        )
-        if not all_dates:
-            continue
-        points = []
-        for d in all_dates:
-            total_cat = sum(
-                (snap.balance_eur if (snap := _latest_before(session, a.id, d)) else Decimal("0"))
-                for a in cat_accounts
-            )
-            points.append((d, float(total_cat)))
-        cat_series[nw.CATEGORY_LABELS.get(cat, cat)] = points
+    # 1. Collect all snapshot dates that fall in range
+    account_snaps: dict[int, dict[datetime.date, float]] = {}
+    all_dates_set: set[datetime.date] = set()
 
-    if not cat_series:
-        st.info("No category data yet.")
+    for acc in accounts:
+        snaps = repo.snapshots_for_account(session, acc.id, since=since)
+        if snaps:
+            account_snaps[acc.id] = {s.as_of: float(s.balance_eur) for s in snaps}
+            all_dates_set.update(account_snaps[acc.id].keys())
+
+    if not all_dates_set:
+        st.info("No snapshot data yet.")
         return
 
+    all_dates = sorted(all_dates_set)
+
+    # 2. Seed carry-forward with the last known value before the window starts
+    #    so accounts not updated recently don't appear as zero at the left edge.
+    carried: dict[int, float] = {}
+    if since:
+        for acc in accounts:
+            snap = _latest_before(session, acc.id, since)
+            if snap:
+                carried[acc.id] = float(snap.balance_eur)
+
+    # 3. Walk every date; carry forward each account's balance and emit one row per series
     rows = []
-    for label, pts in cat_series.items():
-        for d, v in pts:
-            rows.append({"Date": pd.Timestamp(d), "Balance": v, "Category": label})
+    for d in all_dates:
+        # Update carry-forward for any account that has a snapshot on this date
+        for acc in accounts:
+            if acc.id in account_snaps and d in account_snaps[acc.id]:
+                carried[acc.id] = account_snaps[acc.id][d]
+
+        if group_by == "account":
+            for acc in accounts:
+                val = carried.get(acc.id, 0.0)
+                if val > 0:
+                    rows.append({"Date": pd.Timestamp(d), "Balance": val, "Series": acc.name})
+        else:
+            cat_totals: dict[str, float] = {}
+            for acc in accounts:
+                val = carried.get(acc.id, 0.0)
+                label = nw.CATEGORY_LABELS.get(acc.category, acc.category)
+                cat_totals[label] = cat_totals.get(label, 0.0) + val
+            for label, val in cat_totals.items():
+                if val > 0:
+                    rows.append({"Date": pd.Timestamp(d), "Balance": val, "Series": label})
+
+    if not rows:
+        st.info("No data for the selected period.")
+        return
+
     df = pd.DataFrame(rows)
-    fig = px.area(
-        df, x="Date", y="Balance", color="Category",
-        color_discrete_map={
+
+    color_map = (
+        {
             nw.CATEGORY_LABELS["liquidity"]: "#4C72B0",
             nw.CATEGORY_LABELS["investments"]: "#55A868",
             nw.CATEGORY_LABELS["pension"]: "#C44E52",
-        },
+        }
+        if group_by == "category"
+        else None
+    )
+
+    fig = px.area(
+        df, x="Date", y="Balance", color="Series",
+        color_discrete_map=color_map,
+        labels={"Balance": "Balance (EUR)", "Series": ""},
     )
     fig.update_layout(
-        yaxis_tickformat="€,.0f", hovermode="x unified",
-        margin=dict(t=20, b=20), plot_bgcolor="white",
+        yaxis_tickformat="€,.0f",
+        hovermode="x unified",
+        margin=dict(t=20, b=20),
+        plot_bgcolor="white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -249,6 +289,19 @@ def _ibkr_holdings_section(session):
         ]
         if rows:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _fmt_delta(val: Optional[Decimal]) -> Optional[str]:
+    """Format a delta value for st.metric.
+
+    Streamlit colours the delta red when the string starts with '-' and green
+    otherwise.  We must put the minus sign BEFORE the currency symbol, not
+    after it (the default f-string would produce '€-1,234').
+    """
+    if val is None:
+        return None
+    abs_eur = f"€{abs(float(val)):,.0f}"
+    return f"-{abs_eur}" if val < 0 else f"+{abs_eur}"
 
 
 def _earliest_snapshot_date(session) -> Optional[datetime.date]:

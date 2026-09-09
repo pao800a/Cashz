@@ -34,6 +34,7 @@ def tmp_db(tmp_path, monkeypatch):
     import cashz.storage.db as db_module
     db_module._engine = None
     db_module._SessionLocal = None
+    db_module._initialized = False
 
     from cashz.storage.db import init_db
     init_db()
@@ -43,3 +44,4 @@ def tmp_db(tmp_path, monkeypatch):
     # Teardown: reset again
     db_module._engine = None
     db_module._SessionLocal = None
+    db_module._initialized = False

@@ -214,19 +214,21 @@ def parse_statement(raw_xml: bytes) -> FetchResult:
         base_currency = acc_info.get("currency", "USD") or "USD"
 
     # ── NAV from EquitySummaryInBase ──────────────────────────────────────────
+    # Collect the full daily series; nav / report_date = latest row.
     nav: Optional[Decimal] = None
     report_date: Optional[datetime.date] = None
+    nav_history: list[tuple[datetime.date, Decimal]] = []
+
     eq_summary = stmt.find("EquitySummaryInBase")
     if eq_summary is not None:
-        rows = list(eq_summary)
-        if rows:
-            def _rd(elem: ElementTree.Element) -> datetime.date:
-                return _parse_date(elem.get("reportDate")) or datetime.date.min
-
-            latest = max(rows, key=_rd)
-            nav = _decimal_or_none(latest.get("total"))
-            rd = _rd(latest)
-            report_date = rd if rd != datetime.date.min else None
+        for elem in eq_summary:
+            rd = _parse_date(elem.get("reportDate"))
+            total = _decimal_or_none(elem.get("total"))
+            if rd is not None and total is not None:
+                nav_history.append((rd, total))
+        nav_history.sort()
+        if nav_history:
+            report_date, nav = nav_history[-1]
 
     # Cross-check with ChangeInNAV when EquitySummaryInBase is absent
     if nav is None:
@@ -295,9 +297,10 @@ def parse_statement(raw_xml: bytes) -> FetchResult:
         nav=nav,
         base_currency=base_currency,
         report_date=report_date,
+        nav_history=nav_history,
         message=(
             f"NAV={nav} {base_currency} | {len(positions)} positions | {len(cash_rows)} cash rows"
-            f" | period={period} from={from_date} to={to_date}"
+            f" | {len(nav_history)} NAV history rows | period={period} from={from_date} to={to_date}"
         ),
     )
 

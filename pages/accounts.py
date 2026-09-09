@@ -50,7 +50,7 @@ def _accounts_list():
                     "Category": acc.category,
                     "Balance (EUR)": f"€{float(snap.balance_eur):,.2f}" if snap else "—",
                     "As Of": snap.as_of.isoformat() if snap else "—",
-                    "Source": snap.source or "—",
+                    "Source": snap.source if snap else "—",
                     "Staleness (d)": staleness if staleness is not None else "—",
                 }
             )

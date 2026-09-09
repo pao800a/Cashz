@@ -210,20 +210,36 @@ def fx_rate_count(session: Session) -> int:
 
 # ── IBKR Positions ────────────────────────────────────────────────────────────
 def upsert_position(session: Session, position: Position) -> None:
-    existing = session.scalars(
-        select(Position).where(
-            Position.account_id == position.account_id,
-            Position.as_of == position.as_of,
-            Position.conid == position.conid,
-            Position.currency == position.currency,
-        )
-    ).first()
-    if existing:
-        for col in ("symbol", "description", "isin", "asset_category", "quantity",
-                    "mark_price", "position_value", "fx_rate_to_base", "value_eur"):
-            setattr(existing, col, getattr(position, col))
-    else:
-        session.add(position)
+    stmt = sqlite_insert(Position).values(
+        account_id=position.account_id,
+        as_of=position.as_of,
+        symbol=position.symbol,
+        description=position.description,
+        isin=position.isin,
+        conid=position.conid,
+        asset_category=position.asset_category,
+        quantity=position.quantity,
+        mark_price=position.mark_price,
+        position_value=position.position_value,
+        currency=position.currency,
+        fx_rate_to_base=position.fx_rate_to_base,
+        value_eur=position.value_eur,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["account_id", "as_of", "conid", "currency"],
+        set_={
+            "symbol": stmt.excluded.symbol,
+            "description": stmt.excluded.description,
+            "isin": stmt.excluded.isin,
+            "asset_category": stmt.excluded.asset_category,
+            "quantity": stmt.excluded.quantity,
+            "mark_price": stmt.excluded.mark_price,
+            "position_value": stmt.excluded.position_value,
+            "fx_rate_to_base": stmt.excluded.fx_rate_to_base,
+            "value_eur": stmt.excluded.value_eur,
+        },
+    )
+    session.execute(stmt)
 
 
 def positions_for_date(session: Session, account_id: int, as_of: datetime.date) -> list[Position]:
@@ -283,19 +299,28 @@ def delete_salary_months(session: Session) -> None:
 
 
 # ── Sync log ──────────────────────────────────────────────────────────────────
-def log_sync_start(session: Session, connector: str) -> SyncLog:
-    entry = SyncLog(connector=connector, started_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), status="running")
+def log_sync_start(session: Session, connector: str) -> int:
+    """Insert a running sync_log entry and return its integer PK."""
+    entry = SyncLog(
+        connector=connector,
+        started_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
+        status="running",
+    )
     session.add(entry)
+    session.flush()   # assigns entry.id without full commit
+    entry_id = entry.id
     session.commit()
-    return entry
+    return entry_id
 
 
 def log_sync_finish(
-    session: Session, entry: SyncLog, status: str, message: Optional[str] = None
+    session: Session, entry_id: int, status: str, message: Optional[str] = None
 ) -> None:
-    entry.finished_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-    entry.status = status
-    entry.message = message
+    log = session.get(SyncLog, entry_id)
+    if log:
+        log.finished_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        log.status = status
+        log.message = message
     session.commit()
 
 

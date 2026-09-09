@@ -118,7 +118,9 @@ class TestBunqBalanceParsing:
         for b in result.balances:
             assert isinstance(b.balance, Decimal)
 
-    def test_cancelled_accounts_excluded(self):
+    def test_cancelled_accounts_aggregated(self):
+        """Cancelled accounts are no longer excluded — they appear as the
+        synthetic __archived__ entry so historical data is preserved."""
         response = {
             "Response": [
                 {
@@ -133,7 +135,10 @@ class TestBunqBalanceParsing:
             ]
         }
         result = self._simulate_fetch(response)
-        assert result.balances == []
+        assert len(result.balances) == 1
+        archived = result.balances[0]
+        assert archived.external_id == "__archived__"
+        assert archived.subtype == "MonetaryAccountArchived"
 
     def test_missing_api_key_fails(self):
         from cashz.connectors import bunq as bunq_mod

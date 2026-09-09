@@ -46,3 +46,7 @@ class FetchResult:
     report_date: Optional[datetime.date] = None
     error: Optional[str] = None
     message: Optional[str] = None
+    # IBKR: full daily NAV time series from EquitySummaryInBase
+    nav_history: list[tuple[datetime.date, Decimal]] = field(default_factory=list)
+    # bunq: historical EOD balances as (date, external_id, balance, currency)
+    balance_history: list[tuple[datetime.date, str, Decimal, str]] = field(default_factory=list)

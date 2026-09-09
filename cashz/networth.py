@@ -107,4 +107,31 @@ def ytd_delta(session: Session, as_of: Optional[datetime.date] = None) -> Option
     jan1 = datetime.date(as_of.year, 1, 1)
     now_val = total_net_worth(session, as_of)
     start_val = total_net_worth(session, jan1)
+    if start_val == Decimal("0"):
+        return None
     return now_val - start_val
+
+
+def qtd_delta(session: Session, as_of: Optional[datetime.date] = None) -> Optional[Decimal]:
+    """Net worth change since the start of the current quarter."""
+    if as_of is None:
+        as_of = datetime.date.today()
+    quarter_start_month = ((as_of.month - 1) // 3) * 3 + 1
+    quarter_start = datetime.date(as_of.year, quarter_start_month, 1)
+    now_val = total_net_worth(session, as_of)
+    start_val = total_net_worth(session, quarter_start)
+    if start_val == Decimal("0"):
+        return None
+    return now_val - start_val
+
+
+def delta_1yr(session: Session, as_of: Optional[datetime.date] = None) -> Optional[Decimal]:
+    """Net worth change over the last 365 days."""
+    if as_of is None:
+        as_of = datetime.date.today()
+    prior = as_of.replace(year=as_of.year - 1)
+    now_val = total_net_worth(session, as_of)
+    prior_val = total_net_worth(session, prior)
+    if prior_val == Decimal("0"):
+        return None
+    return now_val - prior_val
