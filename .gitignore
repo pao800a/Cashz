@@ -1,0 +1,40 @@
+# ── Secrets and local data ────────────────────────────────────────────────────
+# IMPORTANT: data/ contains banking credentials (bunq context file), the
+# SQLite database with all your financial history, raw API responses, and
+# generated reports. It must NEVER be committed.
+.env
+data/
+
+# Explicit extra guards for credential files that might land elsewhere
+*.pem
+*bunq*context*.json
+bunq.conf
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Exports ───────────────────────────────────────────────────────────────────
+*.csv
+*.pdf
+*.md.report
+
+# ── OS / editors ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
